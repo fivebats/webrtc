@@ -23,6 +23,8 @@ type RTPSender struct {
 
 	mu                     sync.RWMutex
 	sendCalled, stopCalled chan interface{}
+
+	payloadType *uint8 // Senders should have a codec parameter dictionary at some point
 }
 
 // NewRTPSender constructs a new RTPSender
@@ -132,7 +134,8 @@ func (r *RTPSender) ReadRTCP() ([]rtcp.Packet, error) {
 	return rtcp.Unmarshal(b[:i])
 }
 
-// sendRTP should only be called by a track, this only exists so we can keep state in one place
+// sendRTP should only be called by a track, this only exists so we can keep state in one place.
+// Overwrites the payload type field in the rtp header.
 func (r *RTPSender) sendRTP(header *rtp.Header, payload []byte) (int, error) {
 	select {
 	case <-r.stopCalled:
@@ -147,7 +150,16 @@ func (r *RTPSender) sendRTP(header *rtp.Header, payload []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-
+		// Hopefully this next part is temporary.
+		// Obtain payload type for this sender. Currently taken from the
+		// track's codec. (But tracks should not have codecs - this should be set here by the
+		// peerconnection or transceiver...)
+		if r.payloadType == nil {
+			r.payloadType = &r.track.codec.PayloadType
+		}
+		if r.payloadType != nil {
+			header.PayloadType = *r.payloadType
+		}
 		return writeStream.WriteRTP(header, payload)
 	}
 }

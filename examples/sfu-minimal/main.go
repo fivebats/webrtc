@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"time"
+
+	"github.com/pion/sdp/v2"
 
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v2"
@@ -24,7 +27,7 @@ func main() {
 
 	// Setup the codecs you want to use.
 	// Only support VP8, this makes our proxying code simpler
-	m.RegisterCodec(webrtc.NewRTPVP8Codec(webrtc.DefaultPayloadTypeVP8, 90000))
+	//m.RegisterCodec(webrtc.NewRTPVP8Codec(webrtc.DefaultPayloadTypeVP8, 90000))
 
 	// Create the API object with the MediaEngine
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(m))
@@ -32,6 +35,14 @@ func main() {
 	offer := webrtc.SessionDescription{}
 	signal.Decode(<-sdpChan, &offer)
 	fmt.Println("")
+
+	vp8Codec, err := firstCodecOfType(offer, webrtc.VP8)
+	if err != nil {
+		panic(err)
+	}
+
+	// Only support VP8, this makes our proxying code simpler
+	m.RegisterCodec(webrtc.NewRTPVP8Codec(vp8Codec.PayloadType, 90000))
 
 	peerConnectionConfig := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
@@ -48,7 +59,8 @@ func main() {
 	}
 
 	// Allow us to receive 1 video track
-	if _, err = peerConnection.AddTransceiver(webrtc.RTPCodecTypeVideo); err != nil {
+
+	if _, err = peerConnection.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo); err != nil {
 		panic(err)
 	}
 
@@ -117,6 +129,16 @@ func main() {
 		recvOnlyOffer := webrtc.SessionDescription{}
 		signal.Decode(<-sdpChan, &recvOnlyOffer)
 
+		m := webrtc.MediaEngine{}
+		vp8Codec, err := firstCodecOfType(recvOnlyOffer, webrtc.VP8)
+		if err != nil {
+			panic(err)
+		}
+
+		// Only support VP8, this makes our proxying code simpler
+		m.RegisterCodec(webrtc.NewRTPVP8Codec(vp8Codec.PayloadType, 90000))
+
+		api := webrtc.NewAPI(webrtc.WithMediaEngine(m))
 		// Create a new PeerConnection
 		peerConnection, err := api.NewPeerConnection(peerConnectionConfig)
 		if err != nil {
@@ -149,4 +171,30 @@ func main() {
 		// Get the LocalDescription and take it to base64 so we can paste in browser
 		fmt.Println(signal.Encode(answer))
 	}
+}
+
+// firstCodecOfType returns the first codec of a chosen type from a session description
+func firstCodecOfType(sd webrtc.SessionDescription, codecName string) (*sdp.Codec, error) {
+	sdpsd := sdp.SessionDescription{}
+	err := sdpsd.Unmarshal([]byte(sd.SDP))
+	if err != nil {
+		return nil, err
+	}
+	for _, md := range sdpsd.MediaDescriptions {
+		for _, format := range md.MediaName.Formats {
+			pt, err := strconv.Atoi(format)
+			if err != nil {
+				return nil, fmt.Errorf("format parse error")
+			}
+			payloadType := uint8(pt)
+			payloadCodec, err := sdpsd.GetCodecForPayloadType(payloadType)
+			if err != nil {
+				return nil, fmt.Errorf("could not find codec for payload type %d", payloadType)
+			}
+			if payloadCodec.Name == codecName {
+				return &payloadCodec, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("no codec of type %s found in SDP", codecName)
 }
