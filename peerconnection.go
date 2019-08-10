@@ -464,7 +464,7 @@ func (pc *PeerConnection) CreateOffer(options *OfferOptions) (SessionDescription
 	if pc.configuration.SDPSemantics == SDPSemanticsPlanB {
 		midValue = "data"
 	}
-	pc.addDataMediaSection(d, midValue, iceParams, candidates, sdp.ConnectionRoleActive)
+	pc.addDataMediaSection(d, midValue, iceParams, candidates, sdp.ConnectionRoleActpass)
 	appendBundle(midValue)
 
 	d = d.WithValueAttribute(sdp.AttrKeyGroup, bundleValue)
@@ -1364,7 +1364,7 @@ func (pc *PeerConnection) AddTransceiverFromKind(kind RTPCodecType, init ...RtpT
 			return nil, err
 		}
 
-		codecs := pc.api.mediaEngine.getCodecsByKind(kind)
+		codecs := pc.api.mediaEngine.GetCodecsByKind(kind)
 		if len(codecs) == 0 {
 			return nil, fmt.Errorf("no %s codecs found", kind.String())
 		}
@@ -1662,7 +1662,7 @@ func (pc *PeerConnection) addTransceiverSDP(d *sdp.SessionDescription, midValue 
 		WithPropertyAttribute(sdp.AttrKeyRTCPMux).
 		WithPropertyAttribute(sdp.AttrKeyRTCPRsize)
 
-	codecs := pc.api.mediaEngine.getCodecsByKind(t.kind)
+	codecs := pc.api.mediaEngine.GetCodecsByKind(t.kind)
 	for _, codec := range codecs {
 		media.WithCodec(codec.PayloadType, codec.Name, codec.ClockRate, codec.Channels, codec.SDPFmtpLine)
 
