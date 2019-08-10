@@ -7,12 +7,35 @@ import (
 
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v2"
-
 	"github.com/pion/webrtc/v2/examples/internal/signal"
 )
 
 func main() {
 	// Everything below is the Pion WebRTC API! Thanks for using it ❤️.
+
+	// Wait for the offer to be pasted
+	offer := webrtc.SessionDescription{}
+	signal.Decode(signal.MustReadStdin(), &offer)
+
+	// We make our own mediaEngine so we can place the sender's codecs in it. Since we are echoing their RTP packet
+	// back to them we are actually codec agnostic - we can accept all their codecs. This also ensures that we use the
+	// dynamic media type from the sender in our answer.
+	mediaEngine := webrtc.MediaEngine{}
+
+	// Add codecs to the mediaEngine. Note that even though we are only going to echo back the sender's video we also
+	// add audio codecs. This is because createAnswer will create an audioTransceiver and associated SDP and we currently
+	// cannot tell it not to. The audio SDP must match the sender's codecs too...
+	err := mediaEngine.PopulateFromSDP(offer)
+	if err != nil {
+		panic(err)
+	}
+
+	videoCodecs := mediaEngine.GetCodecsByKind(webrtc.RTPCodecTypeVideo)
+	if len(videoCodecs) == 0 {
+		panic("Offer contained no video codecs")
+	}
+
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine))
 
 	// Prepare the configuration
 	config := webrtc.Configuration{
@@ -22,15 +45,19 @@ func main() {
 			},
 		},
 	}
-
 	// Create a new RTCPeerConnection
-	peerConnection, err := webrtc.NewPeerConnection(config)
+	peerConnection, err := api.NewPeerConnection(config)
+	if err != nil {
+		panic(err)
+	}
+	// Set the remote SessionDescription
+	err = peerConnection.SetRemoteDescription(offer)
 	if err != nil {
 		panic(err)
 	}
 
 	// Create Track that we send video back to browser on
-	outputTrack, err := peerConnection.NewTrack(webrtc.DefaultPayloadTypeVP8, rand.Uint32(), "video", "pion")
+	outputTrack, err := peerConnection.NewTrack(videoCodecs[0].PayloadType, rand.Uint32(), "video", "pion")
 	if err != nil {
 		panic(err)
 	}
@@ -66,7 +93,6 @@ func main() {
 			// Replace the SSRC with the SSRC of the outbound track.
 			// The only change we are making replacing the SSRC, the RTP packets are unchanged otherwise
 			rtp.SSRC = outputTrack.SSRC()
-			rtp.PayloadType = webrtc.DefaultPayloadTypeVP8
 
 			if writeErr := outputTrack.WriteRTP(rtp); writeErr != nil {
 				panic(writeErr)
@@ -78,16 +104,6 @@ func main() {
 	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
 		fmt.Printf("Connection State has changed %s \n", connectionState.String())
 	})
-
-	// Wait for the offer to be pasted
-	offer := webrtc.SessionDescription{}
-	signal.Decode(signal.MustReadStdin(), &offer)
-
-	// Set the remote SessionDescription
-	err = peerConnection.SetRemoteDescription(offer)
-	if err != nil {
-		panic(err)
-	}
 
 	// Create an answer
 	answer, err := peerConnection.CreateAnswer(nil)
