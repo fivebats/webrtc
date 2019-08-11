@@ -150,18 +150,22 @@ func (r *RTPSender) sendRTP(header *rtp.Header, payload []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		// Hopefully this next part is temporary.
-		// Obtain payload type for this sender. Currently taken from the
-		// track's codec. (But tracks should not have codecs - this should be set here by the
-		// peerconnection or transceiver...)
+		// Hopefully this next part is temporary and will be removed when senders obtain payload
+		// types from their session instead of the track.
+		// Obtain payload type for this sender. Currently taken from the sender's MediaEngine
+		// to match the track's codec by name.
+		// (But tracks should not have codecs - this should be set here by the
+		// peer connection or transceiver...)
 		if r.payloadType == nil {
-			codec := r.track.codec.Name
-			payloadType, err := firstCodecOfType(r.api.mediaEngine, codec, r.track.codec.Type)
-			if err != nil {
-				return 0, err
+			// this setup should only happen on the first call to sendRTP
+			codecs := r.api.mediaEngine.GetCodecsByName(r.track.codec.Name)
+			if len(codecs) == 0 {
+				return 0, fmt.Errorf("no %d codecs in media engine", r.track.codec.Name)
 			}
+			payloadType := codecs[0].PayloadType
 			r.payloadType = &payloadType
 		}
+		// Overwrite the payload type in the RTP header.
 		if r.payloadType != nil {
 			header.PayloadType = *r.payloadType
 		}
@@ -177,18 +181,4 @@ func (r *RTPSender) hasSent() bool {
 	default:
 		return false
 	}
-}
-
-// firstCodecOfType returns the first codec of a chosen type from a session description
-func firstCodecOfType(m *MediaEngine, codecName string, kind RTPCodecType) (uint8, error) {
-	codecs := m.GetCodecsByKind(kind)
-	if len(codecs) == 0 {
-		return 0, fmt.Errorf("no %s codecs found", kind)
-	}
-	for _, c := range codecs {
-		if c.Name == codecName {
-			return c.PayloadType, nil
-		}
-	}
-	return 0, fmt.Errorf("no %s codecs found", codecName)
 }
