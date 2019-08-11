@@ -22,6 +22,7 @@ window.createSession = isPublisher => {
     navigator.mediaDevices.getUserMedia({ video: true, audio: false })
       .then(stream => {
         stream.getTracks().forEach(track => pc.addTrack(track, stream));
+        document.getElementById('video1').srcObject = stream;
         pc.createOffer()
           .then(d => pc.setLocalDescription(d))
           .catch(log)
