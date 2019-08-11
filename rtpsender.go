@@ -155,7 +155,12 @@ func (r *RTPSender) sendRTP(header *rtp.Header, payload []byte) (int, error) {
 		// track's codec. (But tracks should not have codecs - this should be set here by the
 		// peerconnection or transceiver...)
 		if r.payloadType == nil {
-			r.payloadType = &r.track.codec.PayloadType
+			codec := r.track.codec.Name
+			payloadType, err := firstCodecOfType(r.api.mediaEngine, codec, r.track.codec.Type)
+			if err != nil {
+				return 0, err
+			}
+			r.payloadType = &payloadType
 		}
 		if r.payloadType != nil {
 			header.PayloadType = *r.payloadType
@@ -172,4 +177,18 @@ func (r *RTPSender) hasSent() bool {
 	default:
 		return false
 	}
+}
+
+// firstCodecOfType returns the first codec of a chosen type from a session description
+func firstCodecOfType(m *MediaEngine, codecName string, kind RTPCodecType) (uint8, error) {
+	codecs := m.GetCodecsByKind(kind)
+	if len(codecs) == 0 {
+		return 0, fmt.Errorf("no %s codecs found", kind)
+	}
+	for _, c := range codecs {
+		if c.Name == codecName {
+			return c.PayloadType, nil
+		}
+	}
+	return 0, fmt.Errorf("no %s codecs found", codecName)
 }
