@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"math/rand"
 	"time"
 
 	"github.com/pion/rtcp"
@@ -19,19 +20,21 @@ func main() {
 	sdpChan := signal.HTTPSDPServer()
 
 	// Everything below is the Pion WebRTC API, thanks for using it ❤️.
-	// Create a MediaEngine object to configure the supported codec
-	m := webrtc.MediaEngine{}
 
 	// Setup the codecs you want to use.
 	// Only support VP8, this makes our proxying code simpler
-	m.RegisterCodec(webrtc.NewRTPVP8Codec(webrtc.DefaultPayloadTypeVP8, 90000))
-
-	// Create the API object with the MediaEngine
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(m))
-
 	offer := webrtc.SessionDescription{}
 	signal.Decode(<-sdpChan, &offer)
 	fmt.Println("")
+
+	// Only support VP8, this makes our proxying code simpler
+	codec, err := preferredCodec(webrtc.VP8, offer)
+	if err != nil {
+		panic(err)
+	}
+	vp8Payload := codec.PayloadType
+	m := webrtc.MediaEngine{}
+	m.RegisterCodec(webrtc.NewRTPVP8Codec(vp8Payload, 90000))
 
 	peerConnectionConfig := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
@@ -41,6 +44,8 @@ func main() {
 		},
 	}
 
+	// Create the API object with the MediaEngine
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(m))
 	// Create a new RTCPeerConnection
 	peerConnection, err := api.NewPeerConnection(peerConnectionConfig)
 	if err != nil {
@@ -48,7 +53,12 @@ func main() {
 	}
 
 	// Allow us to receive 1 video track
-	if _, err = peerConnection.AddTransceiver(webrtc.RTPCodecTypeVideo); err != nil {
+	videoTrack, err := peerConnection.NewTrack(vp8Payload, rand.Uint32(), "video", "pion-local")
+	if err != nil {
+		panic(err)
+	}
+	_, err = peerConnection.AddTrack(videoTrack)
+	if err != nil {
 		panic(err)
 	}
 
@@ -106,17 +116,30 @@ func main() {
 		panic(err)
 	}
 
+	//fmt.Printf("ANSWER:\n%s\n", answer.SDP)
 	// Get the LocalDescription and take it to base64 so we can paste in browser
 	fmt.Println(signal.Encode(answer))
 
 	localTrack := <-localTrackChan
 	for {
+		// creates peer connection and track for each sfu client
 		fmt.Println("")
 		fmt.Println("Curl an base64 SDP to start sendonly peer connection")
 
 		recvOnlyOffer := webrtc.SessionDescription{}
 		signal.Decode(<-sdpChan, &recvOnlyOffer)
 
+		// payload type for VP8 could be different depending on the client's code
+		// so we must follow the type given in the offer
+		codec, err := preferredCodec(webrtc.VP8, recvOnlyOffer)
+		if err != nil {
+			panic(err)
+		}
+		vp8PayloadType := codec.PayloadType
+		m := webrtc.MediaEngine{}
+		m.RegisterCodec(webrtc.NewRTPVP8Codec(vp8PayloadType, 90000))
+
+		api := webrtc.NewAPI(webrtc.WithMediaEngine(m))
 		// Create a new PeerConnection
 		peerConnection, err := api.NewPeerConnection(peerConnectionConfig)
 		if err != nil {
@@ -149,4 +172,19 @@ func main() {
 		// Get the LocalDescription and take it to base64 so we can paste in browser
 		fmt.Println(signal.Encode(answer))
 	}
+}
+
+// preferredCodec returns the preferred codec for a given name (such as "VP8") found
+// in the sample description
+func preferredCodec(codecName string, sd webrtc.SessionDescription) (*webrtc.RTPCodec, error) {
+	m := webrtc.MediaEngine{}
+	err := m.PopulateFromSDP(sd)
+	if err != nil {
+		return nil, err
+	}
+	codecs := m.GetCodecsByName(codecName)
+	if len(codecs) == 0 {
+		return nil, fmt.Errorf("no %d codec in session description", codecName)
+	}
+	return codecs[0], nil
 }
